@@ -49,6 +49,44 @@ Helyi MongoDB például így indítható:
 docker run -d --rm --name helpdesk-mongo -p 27017:27017 mongo:8.0
 ```
 
+## Tesztek
+
+Integrációs tesztek HTTP szinten. A tesztek az `app.js` Express appját importálják, szervert nem
+indítanak, és **Supertesttel** hívják. A futtató a Node beépített **`node:test`**-je. A projekt
+CommonJS, Node 24-en fut, és a `node:test` mindent tud, ami kell (`describe`/`it`, hookok,
+`mock.method`, CI-barát kilépési kód). Így nem kell külön tesztkeretrendszer, és nincs ESM/CJS
+átalakítási gond sem.
+
+```bash
+docker run -d --rm --name helpdesk-test-mongo -p 27018:27017 mongo:8.0
+npm ci
+npm run lint
+MONGO_URI_TEST=mongodb://localhost:27018/helpdesk_test npm test
+docker stop helpdesk-test-mongo
+```
+
+- **`MONGO_URI_TEST` (kötelező):** a teszt adatbázis címe. Ha hiányzik, a tesztek érthető üzenettel
+  leállnak.
+- **Védelem:** mivel a tesztek minden teszt előtt törlik az adatbázist, csak `mongodb://` séma,
+  `localhost` / `127.0.0.1` / `mongo` host és `test`-et tartalmazó adatbázisnév engedélyezett (pl.
+  `helpdesk_test`). Egy Atlas (`mongodb+srv://`) vagy fejlesztői cím ezért nem törlődhet. Az ellenőrzés
+  a `pretest` lépésben és csatlakozás előtt is lefut.
+- A `JWT_SECRET`-et a tesztek futásidőben, véletlenszerűen állítják be.
+- A fájlok egymás után futnak (`--test-concurrency=1`), mert közös adatbázist használnak. Minden teszt
+  előtt üres adatbázis jön létre, így a sorrend nem számít.
+
+| Fájl | Mit tesztel |
+|---|---|
+| `test/dbGuard.test.js` | A `MONGO_URI_TEST` védelem (engedélyezett és tiltott címek) |
+| `test/health.test.js` | `/healthz` 200; `/readyz` 200 élő kapcsolattal, és 503 kapcsolat nélkül |
+| `test/users.test.js` | Regisztráció (sikeres, dupla e-mail, hiányzó mező, üres törzs), login (jó és rossz jelszó, nemlétező e-mail), `/me` (tokennel, token nélkül, hibás tokennel) |
+| `test/tickets.test.js` | Létrehozás, validáció, listázás (csak a saját), lekérés, érvénytelen id, módosítás, törlés. Más felhasználó ticketjére GET/PUT/DELETE → 401, a ticket változatlan marad. |
+| `test/notes.test.js` | Üres lista, jegyzet hozzáadása és listázása, validáció, token nélkül 401, más felhasználó ticketjén 401 |
+| `test/regression.test.js` | A README „régi hibák” 1–5. pontja: váratlan hiba → 500 (nem 200), `deleteOne` tényleg töröl, nemlétező ticket (és jegyzetei) → 404, törölt felhasználó tokenje → 401, a PUT nem írja át a `user` mezőt és validál |
+
+**Nyitott pont:** más felhasználó ticketjére a backend 401-et ad, a tesztek ezt az eredeti viselkedést
+rögzítik. Szemantikailag a 403 vagy a 404 lenne pontosabb (lásd a gyökér README-t).
+
 ## Docker
 
 ```bash

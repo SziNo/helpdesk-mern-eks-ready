@@ -9,3 +9,5 @@ Dockerfile
 .dockerignore
 README.md
 coverage
+test
+eslint.config.js

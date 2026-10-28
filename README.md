@@ -77,7 +77,7 @@ Az új verziók a `package-lock.json` szerint ténylegesen telepített verziók.
 | react-toastify | ^9.0.8 | **11.1.0** | A v11 magától injektálja a CSS-t, ezért az `import 'react-toastify/dist/ReactToastify.css'` kikerült |
 | react-icons | ^4.4.0 | **5.7.0** | Nem kellett változtatni (a használt `Fa*` ikonok megvannak) |
 | react-modal | ^3.15.1 | **3.16.3** | Nem kellett változtatni (a peer függőség a React 19-et is engedi) |
-| @testing-library/*, web-vitals | | **kivéve** | Tesztfájl nem volt, a CRA-s tesztfüggőségek feleslegesek |
+| @testing-library/*, web-vitals | | **kivéve**, később újra | Tesztfájl nem volt, a CRA-s tesztfüggőségek kikerültek. A Testing Library a Vitest alapú tesztekkel tért vissza (lásd [Tesztek](#tesztek)). |
 | ESLint | CRA beépített (`react-app`) | **eslint 10.13.0** flat config, eslint-plugin-react-hooks 7.1.1, eslint-plugin-react-refresh 0.5.7 | A react-hooks 7 `set-state-in-effect` szabálya miatt a `useAuthStatus` hook effect nélkül, közvetlenül a store-ból számolja az állapotot |
 
 ### CRA → Vite
@@ -89,8 +89,8 @@ Az új verziók a `package-lock.json` szerint ténylegesen telepített verziók.
 - A régi `"proxy": "http://localhost:5000"` mező helyett a `vite.config.js` proxy beállítása
   (`/api` → `http://localhost:8080`) működik. A dev szerver portja továbbra is 3000.
 - A build kimenete a `build/` helyett a `dist/` mappa. A hash-elt fájlok a `dist/assets/` alá kerülnek.
-- Tesztek: az eredeti projektben **nem volt tesztfájl**, ezért Vitest beállítására nem volt szükség.
-  Működik az `npm run build` és az `npm run lint`.
+- Tesztek: az eredeti projektben **nem volt tesztfájl**. Az új tesztek Vitesttel futnak
+  (lásd [Tesztek](#tesztek)).
 
 ### Új 404-es oldal (frontend)
 - A React Routerben eddig nem volt `"*"` útvonal, ezért egy ismeretlen címen (pl. `/valami`) csak a
@@ -226,6 +226,75 @@ docker compose down -v                 # leállítás + az adatbázis volume tö
   **A compose mongo főverzióját mindig az Atlas cluster verziójához kell igazítani**, hogy a helyi
   teszt ugyanazzal a szerververzióval fusson, mint az éles adatbázis. Ha az Atlas cluster frissül,
   frissítsd a `docker-compose.yml`-ben az `image: mongo:X.Y` sort is.
+
+## Tesztek
+
+Mindkét projekt `npm test` parancsa egyszer fut le (nincs watch mód), és a kilépési kódja jelzi az
+eredményt, így GitHub Actions pipeline-ban közvetlenül használható. Mindkettőben van `npm run lint` is.
+
+| | Eszközök | Tesztek | Mit fednek le |
+|---|---|---|---|
+| **backend** | Node beépített `node:test` + Supertest, valódi MongoDB | 42 | A rossz adatbázis elleni védelem, `/healthz` és `/readyz` (MongoDB-vel és nélküle), regisztráció, login, `/me`, ticket CRUD, más felhasználó ticketjének tiltása, jegyzetek, a „régi hibák” 1–5. pontjának regressziós tesztjei |
+| **frontend** | Vitest + jsdom + React Testing Library | 20 | `ticketSlice` / `noteSlice` reducerek (a 6. régi hiba regressziója), `toastError` / `extractErrorMessage`, a 404-es oldal ismeretlen útvonalon, a Login űrlap mockolt API-val (elutasított és sikeres bejelentkezés) |
+
+A tesztek nem függenek a futtatás sorrendjétől és a gép időzónájától:
+- A backendben minden teszt előtt üres adatbázis jön létre.
+- A frontendben minden teszt friss Redux store-t kap, és a teszt után törlődik a `localStorage`. Az időzóna `UTC`-re van rögzítve.
+- Helyben ellenőrizve: a frontend véletlen sorrendben (`--sequence.shuffle`) is lefut, és mindkét projekt `TZ=Pacific/Auckland` mellett is.
+
+### Futtatás helyben
+
+```bash
+# Backend – ideiglenes MongoDB konténerrel (külön porton, hogy ne ütközzön a fejlesztői mongóval)
+docker run -d --rm --name helpdesk-test-mongo -p 27018:27017 mongo:8.0
+cd backend
+npm ci
+npm run lint
+MONGO_URI_TEST=mongodb://localhost:27018/helpdesk_test npm test
+docker stop helpdesk-test-mongo          # a --rm miatt a konténer törlődik is
+
+# Frontend – nem kell hozzá adatbázis és hálózat (az API hívások mockolva)
+cd frontend
+npm ci
+npm run lint
+npm test
+npm run build
+```
+
+### Környezeti változó: `MONGO_URI_TEST` (csak a backend teszteknek)
+
+| Név | Kötelező | Leírás |
+|---|---|---|
+| `MONGO_URI_TEST` | **igen** (a backend tesztekhez) | A teszt MongoDB címe, pl. `mongodb://localhost:27018/helpdesk_test`. CI-ban egy `mongo:8.0` service konténer, pl. `mongodb://localhost:27017/helpdesk_test` vagy `mongodb://mongo:27017/helpdesk_test`. |
+
+A `JWT_SECRET`-et a tesztek futásidőben, véletlenszerűen állítják be, ezért a tesztekhez nem kell `.env`.
+
+**Védelem a rossz adatbázis ellen.** A backend tesztek minden teszt előtt **törlik a teljes
+adatbázist** (`dropDatabase`). Ha a `MONGO_URI_TEST` véletlenül egy fejlesztői, éles vagy Atlas
+adatbázisra mutatna, a tesztfuttatás minden adatát törölné. Ezért a tesztek csak akkor futnak, ha
+a cím biztosan egy teszt adatbázisra mutat:
+- a séma `mongodb://`, tehát a `mongodb+srv://` (Atlas) cím tiltott;
+- minden host `localhost`, `127.0.0.1` vagy `mongo` (docker / CI service konténer);
+- az adatbázis neve tartalmazza a `test` szót (pl. `helpdesk_test`).
+
+Minden más esetben a tesztek érthető hibaüzenettel, nem nulla kilépési kóddal leállnak, még mielőtt
+bármilyen adatbázis művelet történne. A hiányzó változóra ugyanez vonatkozik. Az ellenőrzés kétszer
+fut le:
+- az `npm test` előtti `pretest` lépésben (`test/check-env.js`);
+- minden csatlakozás előtt a tesztsegédben (`test/helpers.js`), így közvetlen `node --test` futtatásnál is.
+
+A védelmet a `test/dbGuard.test.js` tesztjei ellenőrzik.
+
+## Nyitott pontok
+
+- **Más felhasználó ticketje: 401 helyett 403 vagy 404.** Ha egy bejelentkezett felhasználó egy másik
+  felhasználó ticketjét (vagy annak jegyzeteit) kéri le, módosítja vagy törli, a backend **401
+  Unauthorized**-ot ad. Ez az eredeti viselkedés, a tesztek ezt rögzítik. Szemantikailag pontosabb lenne:
+  - a **403 Forbidden**, mert a kérés hitelesített, csak nincs jogosultsága;
+  - vagy a **404 Not Found**, ha nem akarjuk elárulni, hogy az adott azonosítójú ticket létezik.
+
+  A 401-et a frontend is „ki kell jelentkezni” jelzésnek értelmezhetné. Ha változik, a
+  `backend/test/tickets.test.js` és a `notes.test.js` érintett tesztjeit is frissíteni kell.
 
 ## Docker build parancsok
 

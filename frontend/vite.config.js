@@ -24,5 +24,15 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
     },
+    // Vitest: egyszeri futás (npm test = vitest run), böngésző helyett jsdom
+    test: {
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.js',
+      // A tesztek ne függjenek a gép időzónájától
+      env: { TZ: 'UTC' },
+      // Minden teszt után a vi.mock / vi.fn hívásnaplók törlése
+      clearMocks: true,
+      restoreMocks: true,
+    },
   }
 })

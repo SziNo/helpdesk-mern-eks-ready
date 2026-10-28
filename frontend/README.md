@@ -21,10 +21,34 @@ npm run dev       # Vite dev szerver: http://localhost:3000 (a backend fusson a 
 npm run build     # éles build a dist/ mappába
 npm run preview   # a build kipróbálása helyben
 npm run lint      # ESLint (flat config, react-hooks és react-refresh szabályok)
+npm test          # Vitest, egyszeri futás (CI-ban is), kilépési kóddal
 ```
 
-Tesztek: az eredeti CRA projektben tesztfájl nem volt, csak a tesztfüggőségek. Ezek kikerültek,
-ezért nincs `npm test`. Ha később kell, a Vitest illeszkedik a Vite-hoz.
+## Tesztek
+
+Eszközök: **Vitest** (a Vite-hoz illeszkedik, ugyanazt a konfigurációt használja), **jsdom**,
+**React Testing Library**, `@testing-library/user-event`, `@testing-library/jest-dom`.
+A beállítás a `vite.config.js` `test` blokkjában és az `src/test/setup.js` fájlban van.
+Adatbázis, backend és környezeti változó nem kell hozzá: az API hívások mockolva vannak,
+valódi hálózati kérés nem indul.
+
+| Fájl | Mit tesztel |
+|---|---|
+| `src/features/tickets/ticketSlice.test.js` | Regresszió: a `closeTicket.fulfilled` null `tickets` listával nem dob hibát, betöltött listánál csak a lezárt ticket változik. Kezdőállapot, `getTickets` / `getTicket`. |
+| `src/features/notes/noteSlice.test.js` | Regresszió: a `createNote.fulfilled` null `notes` listával új listát kezd, egyébként hozzáfűz. `getNotes`. |
+| `src/utils.test.js` | A `toastError` stringre, Error objektumra, SerializedError-ra, axios hibára és üres értékre is olvasható szöveget ad (a `toast.error` mockolva). `extractErrorMessage`. |
+| `src/App.test.jsx` | Ismeretlen útvonalon (`/valami`, `/valami/mely/ut`) a NotFound oldal jelenik meg, ismert útvonalon nem |
+| `src/pages/Login.test.jsx` | A Login űrlap elutasított bejelentkezésnél a szerver hibaüzenetét mutatja, sikeresnél üdvözöl (az `authService` `vi.mock`-kal mockolva) |
+
+A segédfüggvény az `src/test/renderWithProviders.jsx`: minden teszt friss Redux store-t, memória
+routert és toast konténert kap. A tesztek után a `localStorage` törlődik, az időzóna `UTC`-re van
+rögzítve, így a tesztek nem függenek a sorrendtől és a gép időzónájától.
+
+```bash
+npm ci
+npm test
+npx vitest              # fejlesztés közben: watch mód
+```
 
 ## Környezeti változók
 
