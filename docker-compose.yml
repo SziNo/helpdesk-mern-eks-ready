@@ -1,0 +1,71 @@
+# Helyi tesztkörnyezet - NEM éles telepítés.
+# A Kubernetes / EKS felállást utánozza: mongo + backend + frontend, és előttük
+# egy nginx "gateway", amely a Gateway API útválasztását helyettesíti.
+# Kívülről csak a gateway érhető el: http://localhost:8000
+#
+# Előfeltétel: backend/.env (a backend/.env.example alapján, JWT_SECRET kitöltve).
+# Indítás:   docker compose up --build
+# Leállítás: docker compose down        (az adatbázis megmarad)
+#            docker compose down -v     (az adatbázis volume is törlődik)
+
+name: helpdesk
+
+services:
+  mongo:
+    # A főverziót a későbbi MongoDB Atlas cluster verziójához kell igazítani!
+    image: mongo:8.0
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Nincs "ports": a MongoDB csak a compose hálózaton belül érhető el
+
+  backend:
+    build:
+      context: ./backend
+    # A változók (pl. JWT_SECRET) a backend/.env fájlból jönnek, nem ebből a fájlból
+    env_file:
+      - ./backend/.env
+    environment:
+      # Nem titkos felülírások a compose környezethez:
+      # a .env helyi fejlesztéshez localhost-ra mutat, itt a "mongo" szolgáltatásra
+      MONGO_URI: mongodb://mongo:27017/helpdesk
+      NODE_ENV: production
+      PORT: "8080"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      # A slim image-ben nincs curl, ezért a node beépített fetch-ét használjuk
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  frontend:
+    build:
+      context: ./frontend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  gateway:
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # Egyedül ez a szolgáltatás érhető el a gépről
+      - "8000:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+volumes:
+  mongo-data:

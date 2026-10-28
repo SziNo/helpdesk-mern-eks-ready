@@ -1,0 +1,16 @@
+# Függőségek és build kimenet
+node_modules/
+dist/
+coverage/
+
+# Környezeti változók / titkok - SOHA ne kerüljenek gitbe
+.env
+.env.*
+!.env.example
+
+# Logok, editor, OS
+npm-debug.log*
+*.log
+.DS_Store
+.vscode/
+.idea/
